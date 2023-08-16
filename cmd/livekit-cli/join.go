@@ -137,16 +137,31 @@ func joinRoom(c *cli.Context) error {
 			logger.Infow("disconnected from room")
 		},
 	}
-	room, err := lksdk.ConnectToRoom(pc.URL, lksdk.ConnectInfo{
-		APIKey:              pc.APIKey,
-		APISecret:           pc.APISecret,
-		RoomName:            c.String("room"),
-		ParticipantIdentity: c.String("identity"),
-	}, roomCB)
-	if err != nil {
-		return err
+
+	var room *lksdk.Room
+
+	if pc.Token != "" {
+		_room, err := lksdk.ConnectToRoomWithToken(pc.URL, pc.Token, roomCB)
+		if err != nil {
+			return err
+		}
+		room = _room
+		defer room.Disconnect()
+	} else {
+		_room, err := lksdk.ConnectToRoom(pc.URL, lksdk.ConnectInfo{
+			APIKey:              pc.APIKey,
+			APISecret:           pc.APISecret,
+			RoomName:            c.String("room"),
+			ParticipantIdentity: c.String("identity"),
+		}, roomCB)
+		if err != nil {
+			return err
+		}
+		room = _room
+		defer room.Disconnect()
 	}
-	defer room.Disconnect()
+
+
 
 	logger.Infow("connected to room", "room", room.Name())
 

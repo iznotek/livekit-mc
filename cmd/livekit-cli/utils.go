@@ -32,13 +32,17 @@ var (
 	roomFlag = &cli.StringFlag{
 		Name:     "room",
 		Usage:    "name of the room",
-		Required: true,
+		Required: false,
 	}
 	urlFlag = &cli.StringFlag{
 		Name:    "url",
 		Usage:   "url to LiveKit instance",
 		EnvVars: []string{"LIVEKIT_URL"},
 		Value:   "http://localhost:7880",
+	}
+	tokenFlag = &cli.StringFlag{
+		Name:    "token",
+		EnvVars: []string{"LIVEKIT_TOKEN"},
 	}
 	apiKeyFlag = &cli.StringFlag{
 		Name:    "api-key",
@@ -51,11 +55,11 @@ var (
 	identityFlag = &cli.StringFlag{
 		Name:     "identity",
 		Usage:    "identity of participant",
-		Required: true,
+		Required: false,
 	}
 	projectFlag = &cli.StringFlag{
-		Name:  "project",
-		Usage: "name of a configured project",
+		Name:     "project",
+		Usage:    "name of a configured project",
 	}
 	verboseFlag = &cli.BoolFlag{
 		Name:     "verbose",
@@ -66,6 +70,7 @@ var (
 func withDefaultFlags(flags ...cli.Flag) []cli.Flag {
 	return append([]cli.Flag{
 		urlFlag,
+		tokenFlag,
 		apiKeyFlag,
 		secretFlag,
 		projectFlag,
@@ -130,11 +135,29 @@ func loadProjectDetails(c *cli.Context, opts ...loadOption) (*config.ProjectConf
 	if val := c.String("url"); val != "" {
 		pc.URL = val
 	}
+	if val := c.String("token"); val != "" {
+		pc.Token = val
+	}
 	if val := c.String("api-key"); val != "" {
 		pc.APIKey = val
 	}
 	if val := c.String("api-secret"); val != "" {
 		pc.APISecret = val
+	}
+	if pc.Token != "" && (pc.URL != "" || !p.requireURL) {
+		var envVars []string
+		// if it's set via env, we should let users know
+		if os.Getenv("LIVEKIT_URL") == pc.URL && pc.URL != "" {
+			envVars = append(envVars, "url")
+		}
+		if os.Getenv("LIVEKIT_TOKEN") == pc.Token {
+			envVars = append(envVars, "token")
+		}
+		if len(envVars) > 0 {
+			fmt.Printf("Using %s from environment\n", strings.Join(envVars, ", "))
+			logDetails(c, pc)
+		}
+		return pc, nil
 	}
 	if pc.APIKey != "" && pc.APISecret != "" && (pc.URL != "" || !p.requireURL) {
 		var envVars []string
@@ -165,6 +188,9 @@ func loadProjectDetails(c *cli.Context, opts ...loadOption) (*config.ProjectConf
 
 	if p.requireURL && pc.URL == "" {
 		return nil, errors.New("url is required")
+	}
+	if pc.Token == "" && pc.APIKey == "" && pc.APISecret == "" {
+		return nil, errors.New("token is required")
 	}
 	if pc.APIKey == "" {
 		return nil, errors.New("api-key is required")

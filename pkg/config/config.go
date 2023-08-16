@@ -33,6 +33,7 @@ type CLIConfig struct {
 type ProjectConfig struct {
 	Name      string `yaml:"name"`
 	URL       string `yaml:"url"`
+	Token     string `yaml:"token"`
 	APIKey    string `yaml:"api_key"`
 	APISecret string `yaml:"api_secret"`
 }
