@@ -24,6 +24,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"bytes"
 
 	"github.com/pion/webrtc/v3"
 	"github.com/urfave/cli/v2"
@@ -64,6 +65,7 @@ var (
 )
 
 const mimeDelimiter = "://"
+const MimeTypeDataByte = "data/byte"
 
 func joinRoom(c *cli.Context) error {
 	pc, err := loadProjectDetails(c)
@@ -270,7 +272,7 @@ func parseSocketFromName(name string) (string, string, string, error) {
 
 	mimeType := name[:offset]
 
-	if mimeType != "h264" && mimeType != "vp8" && mimeType != "opus" {
+	if mimeType != "data" && mimeType != "h264" && mimeType != "vp8" && mimeType != "opus" {
 		return "", "", "", fmt.Errorf("unsupported mime type: %s", mimeType)
 	}
 
@@ -295,6 +297,8 @@ func isSocketFormat(name string) bool {
 func publishSocket(room *lksdk.Room, mimeType string, socketType string, address string, fps float64) error {
 	var mime string
 	switch {
+	case strings.Contains(mimeType, "data"):
+		mime = MimeTypeDataByte
 	case strings.Contains(mimeType, "h264"):
 		mime = webrtc.MimeTypeH264
 	case strings.Contains(mimeType, "vp8"):
@@ -337,14 +341,39 @@ func publishReader(room *lksdk.Room, in io.ReadCloser, mime string, fps float64)
 		}
 	}
 
-	// Create track and publish
-	track, err := lksdk.NewLocalReaderTrack(in, mime, opts...)
-	if err != nil {
-		return err
-	}
-	pub, err = room.LocalParticipant.PublishTrack(track, &lksdk.TrackPublicationOptions{})
-	if err != nil {
-		return err
+	if ( mime != MimeTypeDataByte) {
+		// Create track and publish
+		track, err := lksdk.NewLocalReaderTrack(in, mime, opts...)
+		if err != nil {
+			return err
+		}
+		pub, err = room.LocalParticipant.PublishTrack(track, &lksdk.TrackPublicationOptions{})
+		if err != nil {
+			return err
+		}
+	} else {
+		// Loop over read and publish 
+		for {
+			data := new(bytes.Buffer)
+			numOfByte, err := data.ReadFrom(in)
+			if err != nil {
+				return err
+			}
+
+			if (numOfByte > 0) {
+				if( data.String() == "EXIT") {
+					return fmt.Errorf("finished writing %s stream", mime)
+				}
+				fmt.Printf(data.String() + "\n")
+
+				err = room.LocalParticipant.PublishData(data.Bytes(), livekit.DataPacket_RELIABLE, nil)
+				if err != nil {
+					return err
+				}
+			} 
+				
+			time.Sleep(10*time.Millisecond)
+		}
 	}
 	return nil
 }
