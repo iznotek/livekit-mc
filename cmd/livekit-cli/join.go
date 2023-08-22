@@ -24,7 +24,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
-	"bytes"
+	//"bytes"
 
 	"github.com/pion/webrtc/v3"
 	"github.com/urfave/cli/v2"
@@ -65,7 +65,15 @@ var (
 )
 
 const mimeDelimiter = "://"
-const MimeTypeDataByte = "data/byte"
+const MimeTypeDataJson = "data/json"
+
+type JsonReader struct {
+	stream                      io.Reader
+	dataBuffer                  []byte
+	readBuffer                  []byte
+	tmpReadBuf                  []byte
+	braceCounter				int
+}
 
 func joinRoom(c *cli.Context) error {
 	pc, err := loadProjectDetails(c)
@@ -272,7 +280,7 @@ func parseSocketFromName(name string) (string, string, string, error) {
 
 	mimeType := name[:offset]
 
-	if mimeType != "data" && mimeType != "h264" && mimeType != "vp8" && mimeType != "opus" {
+	if mimeType != "json" && mimeType != "h264" && mimeType != "vp8" && mimeType != "opus" {
 		return "", "", "", fmt.Errorf("unsupported mime type: %s", mimeType)
 	}
 
@@ -297,8 +305,8 @@ func isSocketFormat(name string) bool {
 func publishSocket(room *lksdk.Room, mimeType string, socketType string, address string, fps float64) error {
 	var mime string
 	switch {
-	case strings.Contains(mimeType, "data"):
-		mime = MimeTypeDataByte
+	case strings.Contains(mimeType, "json"):
+		mime = MimeTypeDataJson
 	case strings.Contains(mimeType, "h264"):
 		mime = webrtc.MimeTypeH264
 	case strings.Contains(mimeType, "vp8"):
@@ -341,7 +349,7 @@ func publishReader(room *lksdk.Room, in io.ReadCloser, mime string, fps float64)
 		}
 	}
 
-	if ( mime != MimeTypeDataByte) {
+	if ( mime != MimeTypeDataJson) {
 		// Create track and publish
 		track, err := lksdk.NewLocalReaderTrack(in, mime, opts...)
 		if err != nil {
@@ -352,28 +360,81 @@ func publishReader(room *lksdk.Room, in io.ReadCloser, mime string, fps float64)
 			return err
 		}
 	} else {
+
+		reader := &JsonReader{
+			stream:          in,
+			dataBuffer:      make([]byte, 0),
+			readBuffer:      make([]byte, 0),
+			tmpReadBuf:      make([]byte, 4096),
+			braceCounter:	 0,
+		}
+
 		// Loop over read and publish 
 		for {
-			data := new(bytes.Buffer)
-			numOfByte, err := data.ReadFrom(in)
+			buffer, err := reader.read(1)
 			if err != nil {
 				return err
 			}
+	
+			numOfByte := len(buffer)
 
-			if (numOfByte > 0) {
-				if( data.String() == "EXIT") {
-					return fmt.Errorf("finished writing %s stream", mime)
-				}
-				fmt.Printf(data.String() + "\n")
+			if numOfByte == 0 {
+				return fmt.Errorf("finished writing %s stream", mime)
+			} else {
 
-				err = room.LocalParticipant.PublishData(data.Bytes(), livekit.DataPacket_RELIABLE, nil)
-				if err != nil {
-					return err
+				readByte := buffer[0]
+				last := string(readByte)
+
+				if last == "{" {
+					reader.braceCounter++
 				}
-			} 
-				
-			time.Sleep(10*time.Millisecond)
+
+				if reader.braceCounter != 0 {
+					reader.dataBuffer = append(reader.dataBuffer, readByte)
+				}
+
+				if last == "}" {
+					reader.braceCounter--
+				}
+
+				if reader.braceCounter == 0 && len(reader.dataBuffer) > 0 {
+					str := string(reader.dataBuffer)
+					if( str == "EXIT") {
+						return fmt.Errorf("finished writing %s stream", mime)
+					}
+					fmt.Printf(str)
+
+					err = room.LocalParticipant.PublishData(reader.dataBuffer, livekit.DataPacket_RELIABLE, nil)
+					if err != nil {
+						return err
+					}
+
+					reader.dataBuffer = nil
+				} 
+			}
 		}
 	}
 	return nil
+}
+
+func (reader *JsonReader) read(numToRead int) (data []byte, e error) {
+	for len(reader.readBuffer) < numToRead {
+		n, err := reader.stream.Read(reader.tmpReadBuf)
+		if err != nil {
+			return nil, err
+		}
+		if n == 0 {
+			break
+		}
+		reader.readBuffer = append(reader.readBuffer, reader.tmpReadBuf[0:n]...)
+	}
+	var numShouldRead int
+	if numToRead <= len(reader.readBuffer) {
+		numShouldRead = numToRead
+	} else {
+		numShouldRead = len(reader.readBuffer)
+	}
+	data = reader.readBuffer[0:numShouldRead]
+	reader.readBuffer = reader.readBuffer[numShouldRead:]
+	return data, nil
 }
